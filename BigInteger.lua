@@ -1,8 +1,8 @@
 --[[
-	Version 1.0.0 - 21 May 2020
+	Version 1.0.1 - 21 May 2020
 	This is intended for Roblox ModuleScripts
 	BSD 2-Clause Licence
-	Copyright ©, 2020 - Blockzez (devforum.roblox.com/u/Blockzez and github.com/Blockzez)
+	Copyright Â©, 2020 - Blockzez (devforum.roblox.com/u/Blockzez and github.com/Blockzez)
 	All rights reserved.
 	
 	Redistribution and use in source and binary forms, with or without
@@ -336,9 +336,9 @@ local base_char = "0123456789abcdefghijklmnopqrstuvwxyz";
 local subscript_char =
 {
 	['0'] = '?',
-	['1'] = '¹',
-	['2'] = '²',
-	['3'] = '³',
+	['1'] = 'Â¹',
+	['2'] = 'Â²',
+	['3'] = 'Â³',
 	['4'] = '?',
 	['5'] = '?',
 	['6'] = '?',
@@ -371,7 +371,7 @@ local function BigInteger_tostring(self, options)
 				.. 'E' .. (#r0 - 1)
 		elseif options.notation == "standardScientific" then
 			return r0:sub(1, 1) .. (((options.decimalComma == false) and '.' or ',') .. r0:sub(2)):gsub('[,.]?0*$', '')
-				.. ' × 10' .. tostring(#r0 - 1):gsub('%d', function(v) return subscript_char[v] or '' end);
+				.. ' Ã— 10' .. tostring(#r0 - 1):gsub('%d', function(v) return subscript_char[v] or '' end);
 		elseif options.useGrouping or ((options.notation == "compact") and #r0 < 7) then
 			if #r0 > (2 + math.max(options.minimumGroupingDigits or 1, (options.notation == "compact") and 2 or 1)) then
 				r0 = r0:sub(1, 1) .. r0:sub(2):reverse():gsub("(%d%d%d)", '%1 '):reverse();
@@ -396,7 +396,7 @@ local function BigInteger_tostring(self, options)
 	r0 = (data.sign == -1 and '-' or '') .. r0;
 	if options.base == 10 or options.base == nil then
 		if options.style == "currency" then
-			return r0 .. ' ' .. (options.currency or '¤');
+			return r0 .. ' ' .. (options.currency or 'Â¤');
 		elseif options.style == "percent" then
 			return r0:sub(1, 1) .. (r0:sub(2) .. '00'):reverse():gsub("(%d%d%d)", "%1 "):reverse() .. ' %';
 		end;
@@ -592,7 +592,7 @@ bi.Shl = check(shl, "attempt to perform bitwise operation (shl) on {0} and {1}")
 bi.Shr = check(shr, "attempt to perform bitwise operation (shr) on {0} and {1}");
 function bi.TrueDiv(self, other)
 	local q, r = divrem(self, other);
-	return q + (r / bi.ToNumber(other));
+	return bi.ToNumber(q) + (bi.ToNumber(r) / bi.ToNumber(other));
 end;
 function bi.Sign(self)
 	if not bi_proxy_data[self] then
