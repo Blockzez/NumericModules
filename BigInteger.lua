@@ -1,5 +1,5 @@
 --[[
-	Version 1.0.1 - 21 May 2020
+	Version 1.0.2 - 22 May 2020
 	This is intended for Roblox ModuleScripts
 	BSD 2-Clause Licence
 	Copyright ©, 2020 - Blockzez (devforum.roblox.com/u/Blockzez and github.com/Blockzez)
@@ -156,6 +156,7 @@ local function setdata(self)
 		end;
 		ret[i0] = r;
 	end;
+	remove_zero(ret);
 	return ret;
 end;
 
@@ -198,7 +199,7 @@ local function add(self, other)
 	local data0 = getdata(self);
 	local data1 = getdata(other);
 	local ret = { };
-	local ret_sign = data0.sign;
+	local ret_sign = 1;
 	for i = 1, math.max(#data0.bits, #data1.bits) do
 		ret[i + 1], ret[i] = divmod(((data0.bits[i] or 0) * data0.sign) + ((data1.bits[i] or 0) * data1.sign) + (ret[i] or 0), 2);
 	end;
@@ -229,7 +230,7 @@ local function mul(self, other)
 		return zero;
 	elseif self == one then
 		return other;
-	elseif other == zero then
+	elseif other == one then
 		return self;
 	end;
 	
@@ -447,7 +448,8 @@ end;
 
 function rawnew(bits, sign)
 	local proxy = newproxy(true);
-	bi_proxy_data[proxy] = { bits = setdata(bits); sign = sign; };
+	bits = setdata(bits);
+	bi_proxy_data[proxy] = { bits = bits; sign = (#bits == 0 and 0) or sign; };
 	
 	local proxy_mt = getmetatable(proxy);
 	proxy_mt.__le = le;
@@ -576,7 +578,7 @@ end;
 --[=[ BigInteger Functions ]=]--
 bi.Log = log;
 bi.Pow = pow;
-bi.DivRem = divrem;
+bi.DivRem = check(divrem, "attempt to perform divrem on {0} and {1}");
 bi.ToString = function(self, options)
 	if not bi_proxy_data[self] then
 		error("bad argument #1 (BigInteger expected got " .. typeof(self) .. ')', 2);
@@ -611,13 +613,14 @@ function bi.Log2(self)
 end;
 function bi.Max(...)
 	local args = { ... };
-	local ret = args[1];
-	table.remove(args, 1);
+	local ret;
 	for i, value in next, args do
 		if (not bi_proxy_data[value]) and type(value) ~= "number" then
-			error("bad argument #" ..  i .. " (number or BigInteger expected, got " .. typeof(value) .. ')', 2);
+			error("bad argument #" ..  i .. " (BigInteger expected, got " .. typeof(value) .. ')', 2);
 		end;
-		if value > ret then
+		if not ret then
+			ret = value;
+		elseif value > ret then
 			ret = value;
 		end;
 	end;
@@ -625,13 +628,14 @@ function bi.Max(...)
 end;
 function bi.Min(...)
 	local args = { ... };
-	local ret = args[1];
-	table.remove(args, 1);
+	local ret;
 	for i, value in next, args do
 		if (not bi_proxy_data[value]) and type(value) ~= "number" then
-			error("bad argument #" ..  i .. " (number or BigInteger expected, got " .. typeof(value) .. ')', 2);
+			error("bad argument #" ..  i .. " (BigInteger expected, got " .. typeof(value) .. ')', 2);
 		end;
-		if value < ret then
+		if not ret then
+			ret = value;
+		elseif value < ret then
 			ret = value;
 		end;
 	end;
@@ -649,6 +653,27 @@ function bi.IsBigInteger(self)
 	end;
 	return false;
 end;
+function bi.Clamp(self, min, max)
+	if not bi_proxy_data[self] then
+		error("bad argument #1 (BigInteger expected got " .. typeof(self) .. ')', 2);
+	end;
+	if not bi_proxy_data[min] then
+		error("bad argument #2 (BigInteger expected got " .. typeof(min) .. ')', 2);
+	end;
+	if not bi_proxy_data[max] then
+		error("bad argument #3 (BigInteger expected got " .. typeof(max) .. ')', 2);
+	end;
+	if min > max then
+		error("max must be greater or equal than min", 2)
+	end
+	if self > max then
+		return max;
+	end;
+	if self < min then
+		return min;
+	end;
+	return min;
+end;
 function bi.GetTableData(self)
 	if not bi_proxy_data[self] then
 		error("bad argument #1 (BigInteger expected got " .. typeof(self) .. ')', 2);
@@ -658,6 +683,15 @@ function bi.GetTableData(self)
 		ret[k] = v;
 	end;
 	return { bits = ret, sign = bi_proxy_data[self].sign };
+end;
+function bi.Compare(self, other)
+	if not bi_proxy_data[self] then
+		error("bad argument #1 (BigInteger expected got " .. typeof(self) .. ')', 2);
+	end;
+	if not bi_proxy_data[other] then
+		error("bad argument #2 (BigInteger expected got " .. typeof(other) .. ')', 2);
+	end;
+	return compare(self, other);
 end;
 
 bi.Zero = zero;
