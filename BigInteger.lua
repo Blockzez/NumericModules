@@ -1,5 +1,5 @@
 --[[
-	Version 1.0.2 - 22 May 2020
+	Version 1.0.3 - 25 May 2020
 	This is intended for Roblox ModuleScripts
 	BSD 2-Clause Licence
 	Copyright ©, 2020 - Blockzez (devforum.roblox.com/u/Blockzez and github.com/Blockzez)
@@ -286,7 +286,7 @@ local function divrem(self, other)
 	other = other * sign1;
 	
 	if (self * data0.sign) < other then
-		return zero, other;
+		return zero, self;
 	end;
 	local ret, rem = zero, zero;
 	for i = #data0.bits, 1, -1 do
