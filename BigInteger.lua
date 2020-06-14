@@ -1,6 +1,7 @@
 --[[
-	Version 1.0.3 - 25 May 2020
-	This is intended for Roblox ModuleScripts
+	Version 2.0.0a
+	This is intended for Roblox ModuleScripts.
+	It works on vanilla Lua, but there are far superior implementations you should use instead.
 	BSD 2-Clause Licence
 	Copyright ©, 2020 - Blockzez (devforum.roblox.com/u/Blockzez and github.com/Blockzez)
 	All rights reserved.
@@ -26,11 +27,25 @@
 	OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 	OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ]]--
-local bi = { };
-local bi_proxy_data = { };
+-- International (not International Core) Module Support, just place the path of the module here (don't run require).
+local intl;
+--
 
---[=[ Private functions ]=]--
-local function band(left, right)
+local proxy = { bi = { }, byte = { } };
+local hashes = { [false] = { }, [true] = { } };
+
+local bigint_mt = { __metatable = "The metatable is locked"; };
+
+--[=[ Quick functions ]=]--
+local function div(left, right)
+	return math.floor(left / right);
+end;
+
+local function divmod(left, right)
+	return div(left, right), left % right;
+end;
+
+local function intband(left, right)
 	local p, ret = 1, 0;
 	while left > 0 and right > 0 do
 		local r0, r1 = left % 2, right % 2;
@@ -42,394 +57,710 @@ local function band(left, right)
 	return ret;
 end;
 
-local function divmod(self, other)
-	return math.floor(self / other), self % other;
+-- Lua 5.3
+local function math_type(x)
+	if math.type then
+		return math.type(x);
+	end;
+	return 'float';
 end;
 
-local function remove_zero(self)
-	for i = #self, 1, -1 do
-		if self[i] ~= 0 then
-			break;
+-- For Lua 5.3 users
+local is51 = (_VERSION == "Lua 5.1");
+local function newproxy_or_setmetatable(mt)
+	-- It doesn't really matter which one
+	-- If you prefer metatables you can replace it with "if mt ~= bigint_mt then" instead (if false doesn't work).
+	if is51 and newproxy then
+		local pointer = newproxy(true);
+		local pointer_mt = getmetatable(pointer);
+		for k, v in next, mt do
+			pointer_mt[k] = v;
 		end;
-		table.remove(self, i);
+		return pointer;
 	end;
+	return setmetatable({ }, mt);
+end;
+
+--[=[ Hash ]=]--
+local function gethash(bytes, sign)
+	assert(type(sign) == "boolean", "sign must be either true or false");
+	local p0 = hashes[sign];
+	for _, v in ipairs(bytes) do
+		if not p0[v] then
+			p0[v] = { };
+		end;
+		p0 = p0[v];
+	end;
+	return p0;
+end;
+
+--[=[ Byte handler ]=]--
+--[==[
+	This is getting the byte of the value, in little endian order.
+	Byte 54 is the sign, as the minimum safe integer is -9'007'199'254'740'991 and the maximum
+	is 9'007'199'254'740'991 on Lua 5.1
+	-3 = (0; 1; ...; 0)
+	-1 = (0; ...; 0)
+	0 = (0; ...; 1)
+	1 = (1; ...; 1)
+	3 = (0; 1; ...; 1)
+	I don't know why I haven't gone this method on version 1
+	I might even consider strings or full 64 bit of double (if you're in Roblox Lua) for future versions!
+]==]--
+local function bytehandler_rawset(self, index, value)
+	proxy.byte[self].value[index + 1] = value;
 	return self;
 end;
 
-local function to_base2(self, base)
-	remove_zero(self);
-	if base == 2 then
-		return self;
-	end;
+local function bytehandler_rawget(self, index)
+	return proxy.byte[self].value[index + 1];
+end;
 
-	local r0 = { { 1 } };
-	local r1 = { 1 };
+local function bytehandler_readonly(self)
+	while proxy.byte[self].value[#proxy.byte[self].value] == -1 do
+		table.remove(proxy.byte[self].value);
+	end;
+	proxy.byte[self].readonly = true;
+	return self;
+end;
+
+local function bytehandler_gethash(self)
+	return gethash(proxy.byte[self].value, self.sign);
+end;
+
+local function bytehandler_iter(self)
+	return function(self, i)
+		i = i + 1;
+		if i >= #self then
+			return nil;
+		end;
+		return i, self[i];
+	end, self, -1;
+end;
+
+local function bytehandler_increase(self)
+	if proxy.byte[self].readonly then
+		error("It is now readonly to ensure immutibility", 2);
+	end;
+	local p = -1;
 	repeat
-		local temp_r = { };
-		for i1 = 1, #r1 do
-			temp_r[i1 + 1], temp_r[i1] = divmod((temp_r[i1] or 0) + ((r1[i1] or 0) * 2), base);
-		end;
-		local is_bigger = false;
-		for i1 = math.max(#temp_r, #self), 1, -1 do
-			if (temp_r[i1] or 0) ~= (self[i1] or 0) then
-				is_bigger = (temp_r[i1] or 0) > (self[i1] or 0);
-				break;
-			end;
-		end;
-		
-		if not is_bigger then
-			table.insert(r0, temp_r);
-			r1 = temp_r;
-		end;
-	until is_bigger;
-	
-	local r2 = { };
-	for i0 = #r0, 1, -1 do
-		local is_bigger = true;
-		for i1 = math.max(#self, #r0[i0]), 1, -1 do
-			if (self[i1] or 0) ~= (r0[i0][i1] or 0) then
-				is_bigger = (self[i1] or 0) > (r0[i0][i1] or 0);
-				break;
-			end;
-		end;
-		
-		r2[i0] = is_bigger and 1 or 0;
-		
-		if is_bigger then
-			local temp_r = { };
-			for i1 = 1, math.max(#self, #r0[i0]) do
-				temp_r[i1 + 1], temp_r[i1] = divmod((temp_r[i1] or 0) + (self[i1] or 0) - (r0[i0][i1] or 0), base);
-			end;
-			self = temp_r;
-		end;
-	end;
-	return r2;
+		p = p + 1;
+		self[p] = (self[p] == 0) and 1 or 0;
+	until self[p] == 1;
+	return self;
 end;
 
-local function from_base2(self, base)
-	remove_zero(self);
-	if base == 2 then
-		return self;
+local function bytehandler_decrease(self)
+	if proxy.byte[self].readonly then
+		error("It is now readonly to ensure immutibility", 2);
 	end;
-	local r0 = { };
-	local r1 = { 1 };
-	
-	for i0 = 1, #self do
-		if self[i0] == 1 then
-			do
-				local temp_r = { };
-				for i1 = 1, math.max(#r0, #r1) do
-					temp_r[i1 + 1], temp_r[i1] = divmod((temp_r[i1] or 0) + (r0[i1] or 0) + (r1[i1] or 0), base);
+	local p = -1;
+	local len = #self;
+	repeat
+		if p >= len then
+			error("Stack Underflow", 2);
+		end;
+		p = p + 1;
+		self[p] = (self[p] == 0) and 1 or 0;
+	until self[p] == 0;
+	return self;
+end;
+
+local function bytehandler_index(self, index)
+	if index == "rawset" then
+		return bytehandler_rawset;
+	elseif index == "readonly" then
+		return bytehandler_readonly;
+	elseif index == "gethash" then
+		return bytehandler_gethash;
+	elseif index == "iter" then
+		return bytehandler_iter;
+	elseif index == "sign" then
+		return proxy.byte[self].sign;
+	elseif index == "copy" then
+		return bytehandler_copy;
+	elseif index == "increase" or index == "decrease" then
+		return index == "increase" and bytehandler_increase or bytehandler_decrease;
+	end;
+	local resultind, byteind = divmod(index, is51 and 54 or 64);
+	local byte = proxy.byte[self].value[resultind + 1] or -1;
+	if byteind == (is51 and 53 or 63) then
+		return byte < 0 and 0 or 1;
+	end;
+	if byte < 0 then
+		return div((byte + 1), -(2 ^ byteind)) % 2;
+	end;
+	return div(byte, (2 ^ byteind)) % 2;
+end;
+
+local function bytehandler_newindex(self, index, value)
+	if proxy.byte[self].readonly then
+		error("It is now readonly to ensure immutibility", 2);
+	elseif index == "sign" then
+		proxy.byte[self].sign = value;
+	elseif self[index] ~= value then
+		local b = proxy.byte[self].value;
+		local resultind, byteind = divmod(index, is51 and 54 or 64);
+		if b[resultind + 1] or value ~= 0 then
+			if resultind > #b then
+				for i = #b + 1, resultind do
+					b[i] = -1;
 				end;
-				r0 = temp_r;
 			end;
-		end;
-		do
-			local temp_r = { };
-			for i1 = 1, #r1 do
-				temp_r[i1 + 1], temp_r[i1] = divmod((temp_r[i1] or 0) + ((r1[i1] or 0) * 2), base);
+			local byte = b[resultind + 1] or -1;
+			if byteind == (is51 and 53 or 63) then
+				b[resultind + 1] = (-byte) - 1;
+			else
+				b[resultind + 1] = byte + ((2 ^ byteind) * ((value == 0 and -1 or 1) * (byte < 0 and -1 or 1)));
 			end;
-			r1 = temp_r;
 		end;
 	end;
+end;
+
+local function bytehandler_len(self)
+	return (#proxy.byte[self].value) * (is51 and 54 or 64);
+end;
+
+local bytehandler_mt =
+{
+	__index = bytehandler_index;
+	__newindex = bytehandler_newindex;
+	__len = bytehandler_len;
+};
+
+function bytehandler_copy(self)
+	local value = proxy.byte[self].value;
 	
-	return remove_zero(r0);
+	local pointer = newproxy_or_setmetatable(bytehandler_mt)
+	proxy.byte[pointer] = { readonly = false, value = table.move(value, 1, #value, 1, table.create(#value)) };
+	return pointer;
 end;
 
-local function getdata(self, other)
-	local ret = { };
-	for i0 = 1, #bi_proxy_data[self].bits do
-		for i1 = 0, 52 do
-			ret[(((i0 - 1) * 53) + i1) + 1] = math.floor(bi_proxy_data[self].bits[i0] / (2 ^ i1)) % 2;
-		end;
-	end;
-	remove_zero(ret);
-	return { bits = ret; sign = bi_proxy_data[self].sign };
+local function createbits()
+	local pointer = newproxy_or_setmetatable(bytehandler_mt);
+	proxy.byte[pointer] = { readonly = false, value = { } };
+	
+	return pointer;
 end;
 
-local function setdata(self)
-	local ret = { };
-	for i0 = 1, math.floor(#self / 53) + 1 do
-		local r = 0;
-		for i1 = 0, 52 do
-			r = r + ((2 ^ i1) * (self[(((i0 - 1) * 53) + i1) + 1] or 0));
-		end;
-		ret[i0] = r;
+--[=[ Base bit creation ]=]--
+local function generatebits(tbl, sign)
+	local ret = createbits();
+	for k, v in ipairs(tbl) do
+		ret[k - 1] = v;
 	end;
-	remove_zero(ret);
+	ret.sign = sign;
 	return ret;
 end;
 
---[=[ Operators and functions ]=]--
+--[==[ Pseudo BigInteger, this is NOT immutable, and NOT for consumer use ]==]--
+local pseudo_mt =
+{
+	__add = function(self, other)
+		if other == 0 then
+			return self;
+		end;
+		assert(self.base == other.base, "base is inconsistent");
+		local c = 0;
+		for i, v in ipairs(other.value) do
+			c, self.value[i] = divmod(c + (self.value[i] or 0) + v, self.base);
+		end;
+		if c > 0 then
+			self.value[#other.value + 1] = 1;
+		end;
+		return self;
+	end;
+	__sub = function(self, other)
+		if other == 0 then
+			return self;
+		end;
+		assert(self.base == other.base, "base is inconsistent");
+		if self < other then
+			return nil;
+		end;
+		local c = 0;
+		for i, v in ipairs(other.value) do
+			c, self.value[i] = divmod(c + self.value[i] - v, self.base);
+		end;
+		if c < 0 then
+			table.remove(self.value);
+		end;
+		while self.value[#self.value] == 0 do
+			table.remove(self.value);
+		end;
+		return self;
+	end;
+	__mul = function(self, other)
+		for i = 2, other do
+			self = self + self;
+		end;
+		return self;
+	end;
+	__compare = function(self, other)
+		assert(self.base == other.base, "base is inconsistent");
+		if #self.value ~= #other.value then
+			return (#self.value < #other.value) and -1 or 1;
+		end;
+		for i = #self.value, 1, -1 do
+			if self.value[i] ~= other.value[i] then
+				return (self.value[i] < other.value[i]) and -1 or 1;
+			end;
+		end;
+		return 0;
+	end;
+	__lt = function(self, other)
+		return getmetatable(self).__compare(self, other) < 0;
+	end;
+	__le = function(self, other)
+		return getmetatable(self).__compare(self, other) <= 0;
+	end;
+	__eq = function(self, other)
+		return getmetatable(self).__compare(self, other) == 0;
+	end;
+};
+local function pseudo_bigint(...)
+	local value, base;
+	if select('#', ...) == 1 then
+		base = ...;
+		value = { };
+	else
+		value, base = ...;
+	end;
+	return setmetatable({ value = value, base = base }, pseudo_mt);
+end;
+
+local function copy_pseudo_bigint(value, base)
+	return pseudo_bigint(table.move(value.value, 1, #value.value, 1, table.create(#value.value)), base);
+end;
+
+local function to_bits(v0, base, sign)
+	if base == 2 then
+		return v0;
+	end;
+	local ret = { };
+	local v1 = pseudo_bigint({ 1 }, base);
+	local v2 = (pseudo_bigint(v0, base) - (sign and 0 or v1));
+	-- negative zero
+	if not v2 then
+		v2 = v0;
+		sign = true;
+	end;
+	local value_access = { pseudo_bigint({ 1 }, base) };
+	while v1 <= v2 do
+		table.insert(value_access, copy_pseudo_bigint(v1 * 2, base));
+	end;
+	for i = #value_access, 1, -1 do
+		local v3 = v2 - value_access[i];
+		ret[i] = v3 and 1 or 0;
+	end;
+	
+	return generatebits(ret, sign):readonly();
+end;
+
+local function from_bits(v0, base)
+	if base == 2 then
+		return v0;
+	end;
+	if base ~= nil and not tonumber(base) then
+		error("invalid argument #2 (number expected, got " .. typeof(base) .. ')', 2);
+	elseif base ~= nil and base < 2 and base > 36 then
+		error("invalid argument #2 (base out of range)");
+	end;
+	local ret = pseudo_bigint(base);
+	local v1 = pseudo_bigint({ 1 }, base);
+	if not v0.sign then
+		ret = ret + v1;
+	end;
+	for i, v in v0:iter() do
+		if (v == 1) or (v == true) then
+			ret = ret + v1;
+		end;
+		v1 = v1 * 2;
+	end;
+	return ret.value;
+end;
+
+--[=[ Main ]=]--
+local function check_bigint(func, params, err)
+	return function(...)
+		local argc = select('#', ...);
+		if argc < math.abs(params) then
+			error(("missing argument #%d (bigint expected)"):format(argc + 1));
+		end;
+		local args = { };
+		for i = 1, math.abs(params) do
+			local v = constructor(select(i, ...));
+			if v then
+				args[i] = v;
+			else
+				if params == 2 then
+					local arg0, arg1 = ...;
+					arg0, arg1 = typeof(arg0), typeof(arg1);
+					error((err:gsub("{0}", (arg0 == arg1) and arg0 or (arg0 .. ' and ' .. arg1))), 2);
+				else
+					error(((err or "invalid argument #{0} (bigint expected, got {1})"):gsub("{0}", i):gsub("{1}", typeof(v))), 2);
+				end;
+			end;
+		end;
+		for i = params + 1, argc do
+			args[i] = (select(i, ...));
+		end;
+		return func(unpack(args));
+	end;
+end;
+
+--[==[ Direct methods ]==]--
+local function rawnew(bits)
+	bits:readonly();
+	local hash = bits:gethash();
+	if hash.hash then
+		return hash.hash;
+	end;
+	
+	local pointer = newproxy_or_setmetatable(bigint_mt);
+	hash.hash = pointer;
+	proxy.bi[pointer] = { name = "bigint", bits = bits; };
+	
+	return pointer;
+end;
+local values = { };
+
+local function add(self, other)
+	if self == values.zero then
+		return other;
+	elseif other == values.zero then
+		return self;
+	end;
+	
+	local data0 = proxy.bi[self].bits;
+	local data1 = proxy.bi[other].bits;
+	local ret = createbits();
+	ret.sign = data0.sign;
+	local carry = 0;
+	for i = 0, math.max(#data0, #data1) - 1 do
+		local diff;
+		diff = data0[i] + (data1[i] * ((data0.sign == data1.sign) and 1 or -1)) + carry;
+		carry, ret[i] = divmod(diff, 2);
+	end;
+	if not data1.sign then
+		(data0.sign and bytehandler_decrease or bytehandler_increase)(ret);
+	end;
+	
+	if carry == -1 then
+		carry = 0;
+		local ret1 = createbits();
+		ret1.sign = not ret.sign; 
+		local len = #ret;
+		for i = 0, len do
+			carry, ret1[i] = divmod(((i == len and 0 or 1) - ret[i]) + carry, 2);
+		end;
+		ret = ret1;
+	end;
+
+	return rawnew(ret);
+end;
+local function unm(self)
+	if self == values.zero then
+		return self;
+	end;
+	local ret = proxy.bi[self].bits:copy();
+	ret.sign = not proxy.bi[self].bits.sign;
+	(ret.sign and bytehandler_increase or bytehandler_decrease)(ret);
+	return rawnew(ret);
+end;
+local function mul(self, other)
+	if self == values.zero or other == values.zero then
+		return values.zero;
+	elseif self == values.one then
+		return other;
+	elseif other == values.one then
+		return self;
+	elseif self == values.negative_one then
+		return unm(other);
+	elseif other == values.negative_one then
+		return unm(self);
+	end;
+	
+	local positive = (proxy.bi[self].bits.sign == proxy.bi[other].bits.sign);
+	local data0 = proxy.bi[self:abs()].bits;
+	local data1 = proxy.bi[other:abs()].bits;
+	local p, q = #data0, #data1;
+	local ret = createbits();
+	local tot = 0;
+	for ri = 0, p + q do
+		for bi = math.max(0, ri - p), math.min(ri, q) do
+			local ai = ri - bi;
+			tot = tot + (data0[ai] * data1[bi]);
+		end;
+		tot, ret[ri] = divmod(tot, 2);
+	end;
+	ret[p + q] = tot % 2;
+	ret.sign = positive;
+	if not positive then
+		ret:decrease();
+	end;
+	return rawnew(ret);
+end;
+local function shl(self, ...)
+	local other = ...;
+	if proxy.bi[other] then
+		other = other:todouble();
+	elseif select('#', ...) == 0 then
+		error("missing argument #2 (number expected)", 2);
+	elseif (not tonumber(other)) then
+		error("invalid argument #2 (bigint/number expected got " .. typeof(other) .. ')', 2);
+	else
+		other = math.floor(other);
+	end;
+	local data = proxy.bi[self].bits;
+	if not data.sign then
+		data = data:copy():increase();
+	end;
+	local ret = createbits();
+	local contain_one = true;
+	for i = 0, #data + other - 1 do
+		ret[i] = data[i - other];
+		contain_one = contain_one or (ret[i] ~= 0);
+	end;
+	if (not data.sign) and contain_one then
+		ret:decrease();
+		ret.sign = false;
+	else
+		ret.sign = true;
+	end;
+	return rawnew(ret);
+end;
+local function shr(self, ...)
+	local other = ...;
+	if proxy.bi[other] then
+		other = other:todouble();
+	elseif select('#', ...) == 0 then
+		error("missing argument #2 (number expected)", 2);
+	elseif (not tonumber(other)) then
+		error("invalid argument #2 (bigint/number expected got " .. typeof(other) .. ')', 2);
+	else
+		other = math.floor(other);
+	end;
+	local data = proxy.bi[self];
+	local ret = createbits();
+	for i = other, #data.bits do
+		ret[i] = data.bits[i + other];
+	end;
+	if #ret == 0 and data.sign == - 1 then
+		return values.negative_one;
+	end;
+	return rawnew(ret, data.sign);
+end;
+local function band(self, other)
+	local p, ret = 1, 0;
+	while self > values.zero and other > values.zero do
+		local r0, r1 = self % 2, other % 2;
+		if (r0 + r1) > values.one then
+			ret = ret + p;
+		end;
+		self, other, p = (self - r0) / 2, (other - r1) / 2, p * 2;
+	end;
+	return ret;
+end;
+local function bnot(self)
+	local p, ret = 1 , 0;
+	while self > values.zero do
+		local r = self % 2;
+		if r < values.one then
+			ret = ret + p 
+		end
+		self, p = (self - r) / 2, p * 2;
+	end;
+	return ret;
+end;
+local function bor(self, other)
+	local p, ret = 1, 0;
+	while self + other > values.zero do
+		local r0, r1 = self % 2, other % 2;
+		if r0 + r1 > values.zero then 
+			ret = ret + p;
+		end;
+		self, other, p = (self - r0) / 2, (other - r1) / 2, p * 2;
+	end;
+	return ret;
+end;
+local function bxor(self, other)
+	local p, ret = 1, 0;
+	while self > values.zero and other > values.zero do
+		local r0, r1 = self % 2, other % 2;
+		if r0 ~= r1 then 
+			ret = ret + p;
+		end;
+		self, other, p = (self - r0) / 2, (other - r1) / 2, p * 2;
+	end
+	if self < other then
+		self = other;
+	end;
+	while self > values.zero do
+		local r = self % 2;
+		if r > values.zero then
+			ret = ret + p;
+		end;
+		self, p = (self - r) / 2, p * 2
+	end
+	return ret;
+end;
+local function divrem(self, other)
+	-- NOT modulus, this is C remainder
+	-- If you're looking for modulus use the :Modulus() metamethod
+	-- https://rob.conery.io/2018/08/21/mod-and-remainder-are-not-the-same/
+	-- https://stackoverflow.com/questions/13683563/whats-the-difference-between-mod-and-remainder
+	if other == values.zero then
+		error("division or remainder by zero", 2);
+	elseif self == other then
+		return values.one, values.zero;
+	elseif self == values.zero then
+		return values.zero, values.zero;
+	elseif self == values.one then
+		return values.zero, values.one;
+	elseif self == values.negative_one then
+		return values.zero, values.negative_one;
+	elseif other == values.one then
+		return self, values.zero;
+	elseif other == values.negative_one then
+		return unm(self), values.zero;
+	end;
+	
+	local sign0 = proxy.bi[self].bits.sign;
+	self = self:abs();
+	local data0 = proxy.bi[self].bits;
+	local sign1 = proxy.bi[other].bits.sign and 1 or - 1;
+	other = other * sign1;
+	
+	if self < other then
+		return values.zero, self * (sign0 and 1 or -1);
+	end;
+	
+	local ret, rem = values.zero, values.zero;
+	for i = #data0 - 1, 0, -1 do
+		rem = shl(rem, 1);
+		local b = proxy.bi[rem].bits:copy();
+		b[0] = data0[i];
+		b.sign = true;
+		rem = rawnew(b);
+		if rem >= other then
+			rem = rem - other;
+			b = proxy.bi[ret].bits:copy();
+			b[i] = 1;
+			b.sign = true;
+			ret = rawnew(b);
+		end;
+	end;
+	return ret * ((sign0 and 1 or -1) * sign1), rem * (sign0 and 1 or -1);
+end;
+local function concat(self, other)
+	return tostring(self) .. tostring(other);
+end;
+local function islessthanbit(left, right)
+	-- Positive value override negative
+	local sign0, sign1 = math.sign(left), math.sign(right);
+	if sign0 ~= sign1 then
+		return sign0 < sign1;
+	end;
+	-- Check the absolute value
+	return math.abs(left) < math.abs(right);
+end;
+
 local function compare(self, other)
-	local data0 = bi_proxy_data[self];
-	local data1 = bi_proxy_data[other];
-	if data0.sign ~= data1.sign then
-		return (data0.sign > data1.sign) and 1 or -1;
+	if proxy.bi[self].bits.sign ~= proxy.bi[other].bits.sign then
+		return proxy.bi[self].bits.sign and 1 or -1;
 	end;
-	remove_zero(data0.bits);
-	remove_zero(data1.bits);
-	if #data0.bits ~= #data1.bits then
-		return (#data0.bits > #data1.bits) and 1 or -1;
+	local data0 = proxy.byte[proxy.bi[self].bits].value;
+	local data1 = proxy.byte[proxy.bi[other].bits].value;
+	
+	if #data0 ~= #data1 then
+		return ((#data0 < #data1) == proxy.bi[self].bits.sign) and -1 or 1;
 	end;
-	for i = math.max(#data0.bits, #data1.bits), 1, -1 do
-		if (data0.bits[i] or 0) ~= (data1.bits[i] or 0) then
-			return ((data0.bits[i] or 0) > (data1.bits[i] or 0)) and 1 or -1;
+	for i = #data0, 1, -1 do
+		if data0[i] ~= data1[i] then
+			return (islessthanbit(data0[i], data1[i]) == proxy.bi[self].bits.sign) and -1 or 1;
 		end;
 	end;
 	return 0;
 end;
-local function le(self, other)
-	return compare(self, other) <= 0;
-end;
-local function lt(self, other)
-	return compare(self, other) < 0;
-end;
-local function eq(self, other)
-	return compare(self, other) == 0;
-end;
-
-local function add(self, other)
-	if self == zero then
-		return other;
-	elseif other == zero then
-		return self;
-	end;
-
-	local data0 = getdata(self);
-	local data1 = getdata(other);
-	local ret = { };
-	local ret_sign = 1;
-	for i = 1, math.max(#data0.bits, #data1.bits) do
-		ret[i + 1], ret[i] = divmod(((data0.bits[i] or 0) * data0.sign) + ((data1.bits[i] or 0) * data1.sign) + (ret[i] or 0), 2);
-	end;
-	if ret[#ret] == -1 then
-		local ret1 = { };
-		ret[#ret] = 0;
-		for i = 1, #ret do
-			ret1[i + 1], ret1[i] = divmod(((i == #ret and 1 or 0) - ret[i]) + (ret1[i] or 0), 2);
+local function toint53array(bits)
+	local ret0 = { };
+	for i = 0, #bits - 1 do
+		if i % 53 == 0 then
+			table.insert(ret0, bits[i]);
+		else
+			ret0[#ret0] = ret0[#ret0] + (bits[i] * (2 ^ (i % 53)));
 		end;
-		ret = ret1;
-		ret_sign = ret_sign * -1;
-	end
-	
-	return rawnew(ret, ret_sign);
+	end;
+	if ret0[#ret0] == 0 then
+		table.remove(ret0);
+	end;
+	return ret0;
 end;
-
-local function unm(self)
-	local data = getdata(self);
-	return rawnew(data.bits, data.sign * -1);
-end;
-
-local function sub(self, other)
-	return add(self, unm(other));
-end;
-
-local function mul(self, other)
-	if self == zero or other == zero then
-		return zero;
-	elseif self == one then
-		return other;
-	elseif other == one then
-		return self;
+local function log(self, other)
+	local data = toint53array(proxy.bi[self].bits);
+	if proxy.bi[other] then
+		other = other:todouble();
+	elseif (not tonumber(other)) and other ~= nil then
+		error("invalid argument #2 (bigint/number expected got " .. typeof(other) .. ')', 2);
+	else
+		other = tonumber(other) or 2.71828182845905;
+	end;
+	if (not proxy.bi[self].bits.sign) or other == 1 then
+		return tonumber('nan');
+	elseif self == values.one then
+		return 0;
+	elseif math.abs(other) == tonumber('inf') or other == 0 then
+		return tonumber('nan');
 	end;
 	
-	local data0 = getdata(self);
-	local data1 = getdata(other);
-	local p, q = #data0.bits, #data1.bits;
-	local ret = { };
-	local tot = 0;
-	for ri = 1, p + q do
-		for bi = math.max(1, ri - p + 1), math.min(ri, q) do
-			local ai = ri - bi + 1;
-			tot = tot + (data0.bits[ai] * data1.bits[bi]);
-		end;
-		tot, ret[ri] = divmod(tot, 2);
+	local r0, r1 = 0, 0.5;
+	local topbits = 0;
+	local r2 = data[#data];
+	while r2 > 0 do
+		r2 = math.floor(r2 / 2);
+		topbits = topbits + 1;
 	end;
-	ret[p + q + 1] = tot % 2;
-	return rawnew(ret, data0.sign * data1.sign);
-end;
-
-local function shl(self, other)
-	local data = getdata(self);
-	local ret = { };
-	for i = 1, #data.bits + other do
-		ret[i] = data.bits[i - other] or 0;
-	end;
-	return rawnew(ret, data.sign);
-end;
-
-local function shr(self, other)
-	local data = getdata(self);
-	local ret = { };
-	for i = other, #data.bits do
-		ret[i] = data.bits[i + other] or 0;
-	end;
-	remove_zero(ret);
-	if #ret == 0 and data.sign == - 1 then
-		new(-1);
-	end;
-	return rawnew(ret, data.sign);
-end;
-
-local function divrem(self, other)
-	if other == one then
-		return self, zero;
-	elseif self == zero then
-		return zero, zero;
-	elseif other == zero then
-		error("division by zero", 2);
-	end;
+	local bitlength = (#data - 1) * 53 + topbits;
+	local indbit = (2 ^ (topbits - 1));
 	
-	local data0 = getdata(self);
-	local sign1 = bi_proxy_data[other].sign;
-	other = other * sign1;
-	
-	if (self * data0.sign) < other then
-		return zero, self;
-	end;
-	local ret, rem = zero, zero;
-	for i = #data0.bits, 1, -1 do
-		rem = shl(rem, 1);
-		local b = getdata(rem).bits;
-		b[1] = data0.bits[i];
-		rem = rawnew(b, 1);
-		if rem >= other then
-			rem = rem - other;
-			b = getdata(ret).bits;
-			b[i] = 1;
-			for i1 = 1, i do
-				b[i1] = b[i1] or 0;
+	for i = #data, 1, -1 do
+		while indbit ~= 0 do
+			if (intband(data[i], indbit) ~= 0) then
+				r0 = r0 + r1;
 			end;
-			ret = rawnew(b, 1);
+			r1 = r1 * 0.5;
+			indbit = math.floor(indbit / 2);
 		end;
+		indbit = 2 ^ 53;
 	end;
-	return ret * (data0.sign * sign1), rem * (data0.sign);
+	return (math.log(r0) + (.69314718055994529 * bitlength)) / math.log(other);
 end;
-
-local function div(self, other)
-	return (divrem(self, other));
-end;
-
-local function rem(self, other)
-	return select(2, divrem(self, other));
-end;
-
-local function check(func, msg)
-	msg = msg or '';
-	return function(self, other)
-		local err = false;
-		if bi_proxy_data[self] then
-		elseif type(self) ~= "number" then
-			err = true;
-		elseif bi_proxy_data[other] then
-		elseif type(other) ~= "number" then
-			err = true;
-		end;
-		if err then
-			error(msg:gsub('{0}', typeof(self)):gsub('{1}', typeof(other)), 2);
-		end;
-		return func(new(self), new(other));
-	end;
-end;
-
-local base_char = "0123456789abcdefghijklmnopqrstuvwxyz";
-local subscript_char =
-{
-	['0'] = '?',
-	['1'] = '¹',
-	['2'] = '²',
-	['3'] = '³',
-	['4'] = '?',
-	['5'] = '?',
-	['6'] = '?',
-	['7'] = '?',
-	['8'] = '?',
-	['9'] = '?',
-};
-local compact_table = { 'M', 'G', 'T', 'P', 'E', 'Z', 'Y' };
-local function BigInteger_tostring(self, options)
-	options = options or { };
-	if (options.base or 10) < 2 or (options.base or 10) > 36 then
-		error("bad argument #2 (base out of range)", 2)
-	end;
-	if (options.minimumSignificantDigits or 1) < 1 then
-		error("bad argument #2 (minimumSignificantDigits value is out of range)", 2)
-	end;
-	local data = getdata(self);
-	local r0 = from_base2(data.bits, options.base or 10);
-	local r1 = '';
-	for _, r2 in next, r0 do
-		r1 = base_char:sub(r2 + 1, r2 + 1) .. r1;
-	end;
-	r1 = r1:gsub('^0+', '');
-	r0 = ('0'):rep(math.max((options.minimumSignificantDigits or (((options.base == 2) or (options.base == 16)) and options.useGrouping) 
-		and (math.ceil(#r0 / ((options.base == 2) and 4 or 2)) * ((options.base == 2) and 4 or 2)) or 1) - #r1, 0)) .. r1;
-		
-	if (options.base == 10) or (options.base == nil) then
-		if options.notation == "scientific" or options.notation == "engineering" then
-			return r0:sub(1, 1) .. (((options.decimalComma == false) and '.' or ',') .. r0:sub(2)):gsub('[,.]?0*$', '')
-				.. 'E' .. (#r0 - 1)
-		elseif options.notation == "standardScientific" then
-			return r0:sub(1, 1) .. (((options.decimalComma == false) and '.' or ',') .. r0:sub(2)):gsub('[,.]?0*$', '')
-				.. ' × 10' .. tostring(#r0 - 1):gsub('%d', function(v) return subscript_char[v] or '' end);
-		elseif options.useGrouping or ((options.notation == "compact") and #r0 < 7) then
-			if #r0 > (2 + math.max(options.minimumGroupingDigits or 1, (options.notation == "compact") and 2 or 1)) then
-				r0 = r0:sub(1, 1) .. r0:sub(2):reverse():gsub("(%d%d%d)", '%1 '):reverse();
-			end;
-		elseif options.notation == "compact" then
-			local length, size = divmod(#r0 - 4, 3);
-			if length > #compact_table then
-				length = #compact_table;
-				size = #r0 - (#compact_table * 3) - 4;
-			end;
-			local suffix = compact_table[length];
-			r0 = (function(self)
-				if #self > math.max(2 + (options.minimumGroupingDigits or 2), 4) then
-					return self:sub(1, 1) .. self:sub(2):reverse():gsub("(%d%d%d)", '%1 '):reverse();
-				end;
-				return #self == 1 and (self .. ((options.decimalComma == false) and '.' or ',') .. r0:sub(2, 2)) or self;
-			end)(r0:sub(1, size + 1)) .. ' ' .. suffix;
-		end;
-	elseif ((options.base == 2) or (options.base == 16)) and options.useGrouping then
-		r0 = r0:sub(1, 1) .. r0:sub(2):reverse():gsub(options.base == 16 and '(%d%d)' or '(%d%d%d%d)', '%1 '):reverse();
-	end;
-	r0 = (data.sign == -1 and '-' or '') .. r0;
-	if options.base == 10 or options.base == nil then
-		if options.style == "currency" then
-			return r0 .. ' ' .. (options.currency or '¤');
-		elseif options.style == "percent" then
-			return r0:sub(1, 1) .. (r0:sub(2) .. '00'):reverse():gsub("(%d%d%d)", "%1 "):reverse() .. ' %';
-		end;
-	end;
-	return r0;
-end;
-
-local function pow(self, other)
-	if not bi_proxy_data[self] then
-		error("bad argument #2 (BigInteger or number expected got " .. typeof(other) .. ')', 2);
-	end;
-	if bi_proxy_data[other] then
-		other = tonumber(tostring(other));
-	elseif type(other) ~= "number" then
-		error("bad argument #2 (BigInteger or number expected got " .. typeof(other) .. ')', 2);
+local function pow(self, ...)
+	local other = (...);
+	if proxy.bi[other] then
+		other = other:todouble();
+	elseif select('#', ...) == 0 then
+		error("missing argument #2 (number expected)", 2);
+	elseif (not tonumber(other)) then
+		error("invalid argument #2 (bigint/number expected got " .. typeof(other) .. ')', 2);
 	else
 		other = math.floor(other);
 	end;
 	if other == 0 then
-		return one;
+		return values.one;
 	elseif other == 1 then
 		return self;
 	elseif other < 0 then
-		return zero;
-	elseif self == one or self == zero then
+		return values.zero;
+	elseif self == values.one or self == values.zero then
 		return self;
-	elseif self == minus_one then
+	elseif self == values.negative_one then
 		return band(other, self) ~= 0 and 1 or -1;
 	end;
-	local ret = one;
+	local ret = values.one;
 	while other ~= 0 do
-		if band(other, 1) ~= 0 then
+		if intband(other, 1) ~= 0 then
 			ret = ret * self;
 		end;
 		other = math.floor(other / 2);
@@ -438,273 +769,415 @@ local function pow(self, other)
 	return ret;
 end;
 
-local function index(self, index, value)
-	return error("attempt to index BigInteger with '" .. index .. "'");
-end;
-
-local function concat(self, other)
-	return tostring(self) .. tostring(other);
-end;
-
-function rawnew(bits, sign)
-	local proxy = newproxy(true);
-	bits = setdata(bits);
-	bi_proxy_data[proxy] = { bits = bits; sign = (#bits == 0 and 0) or sign; };
-	
-	local proxy_mt = getmetatable(proxy);
-	proxy_mt.__le = le;
-	proxy_mt.__lt = lt;
-	proxy_mt.__eq = eq;
-	proxy_mt.__unm = unm;
-	proxy_mt.__add = check(add, "attempt to perform arithmetic (add) on {0} and {1}");
-	proxy_mt.__sub = check(sub, "attempt to perform arithmetic (sub) on {0} and {1}");
-	proxy_mt.__mul = check(mul, "attempt to perform arithmetic (mul) on {0} and {1}");
-	proxy_mt.__div = check(div, "attempt to perform arithmetic (div) on {0} and {1}");
-	proxy_mt.__mod = check(rem, "attempt to perform arithmetic (rem) on {0} and {1}");
-	proxy_mt.__pow = check(pow, "attempt to perform arithmetic (pow) on {0} and {1}");
-	proxy_mt.__concat = concat;
-	proxy_mt.__tostring = BigInteger_tostring;
-	proxy_mt.__index = index;
-	proxy_mt.__newindex = index;
-	proxy_mt.__metatable = "The metatable is locked";
-	return proxy;
-end;
-
-function new(v, base)
-	if bi_proxy_data[v] then
-		return v;
+--[=[ Class methods ]=]--
+local bi = setmetatable({ }, { 
+	__newindex = function(self, ind, func)
+		rawset(self, ind, check_bigint(func, 1));
 	end;
-	if base == nil then base = 10; end;
-	if not tonumber(base) then
-		error("bad argument #2 (number expected, got " .. typeof(base) .. ')', 2);
-	end;
-	base = math.floor(tonumber(base));
-	if base < 2 or base > 36 then
-		error("bad argument #2 (base out of range)", 2);
-	end;
-	if type(v) == "number" then
-		v = ('%.0f'):format(v);
-	end;
-	v = tostring(v):lower();
-	local int, frac, exp = v:match('(%d*)[.,]?(%d*)e[+]?(%d+)');
-	if int and base == 10 then
-		exp = tonumber(exp);
-		if not exp then
-			return nil;
+});
+-- Can only be accessed by International module
+if intl then
+	intl = require(intl);
+	bi.tolocalestring = intl.ToLocaleString;
+	if intl.RuleBasedNumberFormat then
+		function bi.torulebasedlocalestring(self, locale, options)
+			return intl.RuleBasedNumberFormat.new(locale, options):Format(self);
 		end;
-		if int == '' and frac == '' then
-			return nil;
-		end;
-		frac = frac:gsub('0+$', '');
-		if #frac > exp then
-			return nil;
-		elseif #frac < exp then
-			frac = frac .. ('0'):rep(exp - #frac);
-		end
-		v = int .. frac;
-	end;
-	if v:sub(1, 1):match('[ ?_]') or v:sub(-1):match('[ ?_]') 
-		or v:match('[ ?_][ ?_]') or v:match('[^- ?_' .. base_char .. ']') then
-		return nil;
-	end;
-	v = v:gsub('[ ?_]', '')
-	local ret_sign = 1;
-	if v:sub(1, 1) == '-' then
-		ret_sign = -1;
-		v = v:sub(2);
-	end;
-	local ret = { };
-	for i = 1, #v do
-		local r = (base_char:find(v:sub(i, i)));
-		if (r or 37) > base then
-			return nil;
-		end;
-		table.insert(ret, 1, r - 1);
-	end;
-	ret = to_base2(ret, base);
-	if #ret == 0 then
-		ret_sign = 0;
-	end;
-	return rawnew(ret, ret_sign);
-end;
-
-one = new(1);
-zero = new(0);
-minus_one = new(-1);
-
-local function log(self, other)
-	if not bi_proxy_data[self] then
-		error("bad argument #1 (BigInteger expected got " .. typeof(self) .. ')', 2);
-	end;
-	local data = bi_proxy_data[self];
-	if bi_proxy_data[other] then
-		other = tonumber(tostring(other));
-	elseif type(other) ~= "number" and other ~= nil then
-		error("bad argument #2 (number expected got " .. typeof(other) .. ')', 2);
 	else
-		other = other or 2.71828182845905;
-	end;
-	if data.sign < 0 or other == 1 then
-		return tonumber('nan');
-	elseif self == one then
-		return 0;
-	elseif other == tonumber('inf') or other == 0 then
-		return tonumber('nan');
-	end;
-	
-	local r0, r1 = 0, .5;
-	local topbits = 0;
-	local r2 = data.bits[#data.bits];
-	while r2 > 0 do
-		r2 = math.floor(r2 / 2);
-		topbits = topbits + 1;
-	end;
-	local bitlength = (#data.bits - 1) * 53 + topbits;
-	local indbit = (2 ^ (topbits - 1));
-	
-	for i = #data.bits, 1, -1 do
-		while indbit ~= 0 do
-			if (band(data.bits[i], indbit) ~= 0) then
-				r0 = r0 + r1;
-			end;
-			r1 = r1 * 0.5;
-			indbit = math.floor(indbit / 2);
+		function bi.torulebasedlocalestring()
+			error("torulebasedlocalestring required the intl (NOT intlcore) module that supports rule based number formatting", 2);
 		end;
-		indbit = 2147483648;
 	end;
-	return (math.log(r0) + (.69314718055994529 * bitlength)) / math.log(other);
+else
+	function bi.tolocalestring()
+		error("tolocalestring requires the intl (NOT intlcore) module", 2);
+	end;
+	function bi.torulebasedlocalestring()
+		error("torulebasedlocalestring required the intl (NOT intlcore) module that supports rule based number formatting", 2);
+	end;
+end;
+rawset(bi, 'values', values)
+
+-- For scientific notation, currencies and compact numbers tolocalestring is more than enough
+local base_char = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+local function concat_base(bits, base)
+	local tbl = from_bits(bits, base);
+	if base <= 10 then
+		return table.concat(tbl, ''):reverse():gsub('^0+', '');
+	end;
+	local r = '';
+	for _, v in ipairs(tbl) do
+		r = base_char:sub(v - 1, v - 1) .. r;
+	end;
+	return r:gsub('^0+', '');
+end;
+function bi.tostring(self, options)
+	local ret = concat_base(proxy.bi[self].bits, (type(options) == "number") and options or 10);
+	if ret == '' then
+		ret = '0';
+	end;
+	if type(options) ~= "table" and type(options) ~= "number" and options ~= nil then
+		error("invalid argument #2 (string expected, got " .. typeof(options) .. ')', 2);
+	elseif options then
+		local minimumIntegerDigits = (options.minimumIntegerDigits or 0);
+		local maximumIntegerDigits = (options.maximumIntegerDigits or math.huge);
+		if minimumIntegerDigits < options.maximumIntegerDigits then
+			error("the maximumIntegerDigits is bigger than minimumIntegerDigits");
+		end;
+		if maximumIntegerDigits and #ret > maximumIntegerDigits then
+			ret = ret:sub(-options.maximumIntegerDigits);
+		end;
+		if minimumIntegerDigits and #ret < minimumIntegerDigits then
+			ret = ('0'):rep(minimumIntegerDigits - #ret) .. ret;
+		end;
+		if #ret > 2 + (options.minimumGroupingDigits or 1) then
+			local rem;
+			options.groupSize = options.groupSize or { };
+			options.groupSize[1] = options.groupSize[1] or 3;
+			options.groupSize[2] = options.groupSize[2] or options.groupSize[1] or 3;
+			ret, rem = (options.groupSymbol or ' ') .. ret:sub(-options.groupSize[1]), ret:sub(1, -(options.groupSize[1] + 1));
+			while #rem > options.groupSize[2] do
+				ret, rem = (options.groupSymbol or ' ') .. ret:sub(-options.groupSize[2]), ret:sub(1, -(options.groupSize[2] + 1));
+			end;
+			ret = rem .. ret;
+		end;
+		if options.minimumFractionDigits then
+			ret = ret .. (options.decimalSymbol or '.') .. ('0'):rep(options.minimumFractionDigits);
+		end;
+	end;
+	return (proxy.bi[self].bits.sign and '' or '-') .. ret;
+end;
+function bi.bin(self)
+	return (('0b' .. concat_base(proxy.bi[self].bits)):gsub('^0b$', '0b0'));
+end;
+function bi.hex(self)
+	return (('0x' .. concat_base(proxy.bi[self].bits)):gsub('^0x$', '0x0'));
 end;
 
---[=[ BigInteger Functions ]=]--
-bi.Log = log;
-bi.Pow = pow;
-bi.DivRem = check(divrem, "attempt to perform divrem on {0} and {1}");
-bi.ToString = function(self, options)
-	if not bi_proxy_data[self] then
-		error("bad argument #1 (BigInteger expected got " .. typeof(self) .. ')', 2);
+-- Shortener, similar to Berezaa's MoneyLib shorten's function but uses strings, and improvent on large abbreviation
+-- If you want more options, use tolocalestring, but it's limited to trillion (long scale: billion) :(
+local suffixes = {"k","M","B","T","qd","Qn","sx","Sp","O","N","de","Ud","DD","tdD","qdD","QnD","sxD","SpD","OcD","NvD","Vgn","UVg","DVg","TVg","qtV","QnV","SeV","SPG","OVG","NVG","TGN","UTG","DTG","tsTG","qtTG","QnTG","ssTG","SpTG","OcTG","NoTG","QdDR","uQDR","dQDR","tQDR","qdQDR","QnQDR","sxQDR","SpQDR","OQDDr","NQDDr","qQGNT","uQGNT","dQGNT","tQGNT","qdQGNT","QnQGNT","sxQGNT","SpQGNT", "OQQGNT","NQQGNT","SXGNTL"};
+function bi.shorten(self)
+	local sign, value = tostring(self):match("(-?)(%d*)");
+	
+	local len = #value;
+	local size;
+	local suffix = suffixes[math.floor((len - 4) / 3)];
+	if suffix then
+		size = ((len - 1) % 3) + 1;
+	elseif len < 4 then
+		return sign .. value;
+	else
+		size = len - (3 * #suffixes);
 	end;
-	return BigInteger_tostring(self, options);
-end;
-function bi.ToLocaleString(self, locale, options)
-	local msg = "ToLocaleString isn't implemented for this version of the module";
-	warn(msg, 2);
-	return '';
-end;
-bi.Shl = check(shl, "attempt to perform bitwise operation (shl) on {0} and {1}");
-bi.Shr = check(shr, "attempt to perform bitwise operation (shr) on {0} and {1}");
-function bi.TrueDiv(self, other)
-	local q, r = divrem(self, other);
-	return bi.ToNumber(q) + (bi.ToNumber(r) / bi.ToNumber(other));
-end;
-function bi.Sign(self)
-	if not bi_proxy_data[self] then
-		error("bad argument #1 (BigInteger expected got " .. typeof(self) .. ')', 2);
+	
+	local int = value:sub(1, size);
+	-- minimumGroupingDigits for compact numbers is recommended to be 2. #int > 4 is normal, changing it to 3 is not recommended
+	if #int > 4 then
+		int = int:reverse():gsub("(%d%d%d)", "%1,"):gsub(',$', ''):reverse();
 	end;
-	return bi_proxy_data[self].sign;
+	value = int .. (size > 2 and '' or ('.' .. value:sub(size + 1, size + (4 - size)))) .. suffix;
+	
+	return sign .. value;
 end;
-function bi.Abs(self)
-	return self * bi.Sign(self);
+
+function bi.mod(self, other)
+	local ret = self % other;
+	return (ret < 0) and (ret + other) or ret;
 end;
-function bi.Log10(self)
+rawset(bi, 'mod', check_bigint(bi.modulus, 2, "attempt to perform arithmetic (mod) on {0}"));
+
+function bi.divmod(self, other)
+	local r0, r1 = divrem(self, other);
+	return r0 + (((r0 < values.zero) and (r1 == values.zero)) and 1 or 0), (r1 < values.zero) and (r1 + other) or r1;
+end;
+rawset(bi, 'divmod', check_bigint(bi.divmod, 2, "attempt to perform arithmetic (divmod) on {0}"));
+
+rawset(bi, 'divrem', check_bigint(divrem, 2, "attempt to perform arithmetic (divrem) on {0}"));
+rawset(bi, 'compare', check_bigint(compare, 2, "attempt to compare {0}"));
+
+rawset(bi, 'band', check_bigint(band, 2, check_bigint(band, 2, "attempt to perform bitwise operation (band) on {0}")));
+rawset(bi, 'bor', check_bigint(band, 2, check_bigint(bor, 2, "attempt to perform bitwise operation (bor) on {0}")));
+rawset(bi, 'bxor', check_bigint(band, 2, check_bigint(bxor, 2, "attempt to perform bitwise operation (bxor) on {0}")));
+
+bi.bnot = bnot;
+
+function bi.iseven(self)
+	return proxy.bi[self].bits[0] == (proxy.bi[self].bits.sign and 0 or 1);
+end;
+
+function bi.sign(self)
+	if self == values.zero then
+		return 0;
+	end;
+	return proxy.bi[self].bits.sign and 1 or -1;
+end;
+
+function bi.todouble(self)
+	local ret = 0;
+	for i, v in proxy.bi[self].bits:iter() do
+		ret = ret + (v * (2 ^ i));
+	end;
+	return (ret + (proxy.bi[self].bits.sign and 0 or 1)) * (proxy.bi[self].bits.sign and 1 or -1);
+end;
+
+function bi.toint32(self)
+	return self:todouble() % (2 ^ 31);
+end;
+
+function bi.min(value, ...)
+	local argc = select('#', ...);
+	local min_val = value;
+	for i = 1, argc do
+		local v = constructor(select(i, ...));
+		if v then
+			if v < min_val then
+				min_val = v;
+			end;
+		else
+			error((("invalid argument #{0} (bigint expected, got {1})"):gsub("{0}", i + 1):gsub("{1}", typeof(v))), 2);
+		end;
+	end;
+	return min_val;
+end;
+
+function bi.max(value, ...)
+	local argc = select('#', ...);
+	local max_val = value;
+	for i = 1, argc do
+		local v = constructor(select(i, ...));
+		if v then
+			if v < max_val then
+				max_val = v;
+			end;
+		else
+			error((("invalid argument #{0} (bigint expected, got {1})"):gsub("{0}", i + 1):gsub("{1}", typeof(v))), 2);
+		end;
+	end;
+	return max_val;
+end;
+
+bi.pow = pow;
+bi.log = log;
+function bi.log10(self)
 	return log(self, 10);
 end;
-function bi.Log2(self)
+function bi.log2(self)
 	return log(self, 2);
+end
+function bi.log16(self)
+	return log(self, 36);
 end;
-function bi.Max(...)
-	local args = { ... };
-	local ret;
-	for i, value in next, args do
-		if (not bi_proxy_data[value]) and type(value) ~= "number" then
-			error("bad argument #" ..  i .. " (BigInteger expected, got " .. typeof(value) .. ')', 2);
-		end;
-		if not ret then
-			ret = value;
-		elseif value > ret then
-			ret = value;
-		end;
-	end;
-	return ret;
+function bi.log12(self)
+	return log(self, 12);
 end;
-function bi.Min(...)
-	local args = { ... };
-	local ret;
-	for i, value in next, args do
-		if (not bi_proxy_data[value]) and type(value) ~= "number" then
-			error("bad argument #" ..  i .. " (BigInteger expected, got " .. typeof(value) .. ')', 2);
-		end;
-		if not ret then
-			ret = value;
-		elseif value < ret then
-			ret = value;
-		end;
-	end;
-	return ret;
+function bi.log8(self)
+	return log(self, 8);
 end;
-function bi.ToNumber(self)
-	if not bi_proxy_data[self] then
-		error("bad argument #1 (BigInteger expected got " .. typeof(self) .. ')', 2);
+
+function bi.abs(self)
+	if proxy.bi[self].bits.sign then
+		return self;
 	end;
-	return tonumber(tostring(self));
+	local ret = proxy.bi[self].bits:copy();
+	ret.sign = true;
+	ret:increase();
+	return rawnew(ret);
 end;
-function bi.IsBigInteger(self)
-	if bi_proxy_data[self] then
-		return true;
+
+getmetatable(bi).__newindex = nil;
+bi.copysign = check_bigint(function(self, sign)
+	local ret = proxy.bi[self].bits:copy();
+	ret.sign = not proxy.bi[sign].bits.sign;
+	if ret.sign ~= proxy.bi[self].bits.sign then
+		(ret.sign and bytehandler_decrease or bytehandler_increase)(ret);
 	end;
-	return false;
-end;
-function bi.Clamp(self, min, max)
-	if not bi_proxy_data[self] then
-		error("bad argument #1 (BigInteger expected got " .. typeof(self) .. ')', 2);
-	end;
-	if not bi_proxy_data[min] then
-		error("bad argument #2 (BigInteger expected got " .. typeof(min) .. ')', 2);
-	end;
-	if not bi_proxy_data[max] then
-		error("bad argument #3 (BigInteger expected got " .. typeof(max) .. ')', 2);
-	end;
-	if min > max then
-		error("max must be greater or equal than min", 2)
-	end
-	if self > max then
+	return rawnew(ret);
+end, -2);
+
+bi.clamp = check_bigint(function(self, min, max)
+	if max < min then
+		error("max must be greater than min", 2);
+	elseif self < min then
+		return min;
+	elseif self > max then
 		return max;
 	end;
-	if self < min then
-		return min;
-	end;
-	return min;
+	return self;
+end, 3);
+
+--[==[ Metamethods ]==]--
+bigint_mt.__index = bi;
+function bigint_mt.__tostring(self, options)
+	return self:tostring(options);
 end;
-function bi.GetTableData(self)
-	if not bi_proxy_data[self] then
-		error("bad argument #1 (BigInteger expected got " .. typeof(self) .. ')', 2);
-	end;
-	local ret = { };
-	for k, v in ipairs(bi_proxy_data[self].bits) do
-		ret[k] = v;
-	end;
-	return { bits = ret, sign = bi_proxy_data[self].sign };
+bigint_mt.__concat = concat;
+-- Metatable2
+bigint_mt.__tonumber = bi.todouble;
+bigint_mt.__tolocalestring = bi.tolocalestring;
+
+bigint_mt.__abs = bi.abs;
+bigint_mt.__log = bi.log;
+function bigint_mt.__round(self)
+	return self;
 end;
-function bi.Compare(self, other)
-	if not bi_proxy_data[self] then
-		error("bad argument #1 (BigInteger expected got " .. typeof(self) .. ')', 2);
-	end;
-	if not bi_proxy_data[other] then
-		error("bad argument #2 (BigInteger expected got " .. typeof(other) .. ')', 2);
-	end;
-	return compare(self, other);
+function bigint_mt.__repr(self)
+	return ("n'%s'"):format(tostring(self));
 end;
 
-bi.Zero = zero;
-bi.One = one;
-bi.MinusOne = minus_one;
-bi.new = new;
+setmetatable(bigint_mt, { __newindex = function(self, index, func) rawset(self, index, check_bigint(func, 2, " attempt to perform arithmetic (" .. index:sub(3):gsub('mod', 'rem') .. ") on {0}")) end; })
+bigint_mt.__add = add;
+bigint_mt.__unm = unm;
+function bigint_mt.__sub(self, other)
+	return add(self, unm(other));
+end;
+bigint_mt.__mul = mul;
+function bigint_mt.__div(self, other)
+	return (divrem(self, other));
+end;
+function bigint_mt.__mod(self, other)
+	return (select(2, divrem(self, other)));
+end;
+bigint_mt.__pow = pow;
+-- Lua 5.3
+bigint_mt.__idiv = bigint_mt.__div;
+-- Metatable2
+bigint_mt.__divmod = divrem;
+
+-- Just in case for Lua 5.3 users
+getmetatable(bigint_mt).__newindex = function(self, index, func) rawset(self, index, check_bigint(func, 2, " attempt to compare {0}")) end;
+function bigint_mt.__lt(self, other)
+	return compare(self, other) < 0;
+end;
+function bigint_mt.__le(self, other)
+	return compare(self, other) <= 0;
+end;
+function bigint_mt.__eq(self, other)
+	return compare(self, other) == 0;
+end;
+
+-- Metatable2
+bigint_mt.__compare = compare;
+
+getmetatable(bigint_mt).__newindex = function(self, index, func) rawset(self, index, check_bigint(func, 2, " attempt to perform bitwise operation (" .. index:sub(3) .. ") on {0}")); end;
+bigint_mt.__band = band;
+bigint_mt.__bor = bor;
+bigint_mt.__bxor = bxor;
+bigint_mt.__bnot = bnot;
+bigint_mt.__shl = shl;
+bigint_mt.__shr = shr;
+
+setmetatable(bigint_mt, nil);
+
+--[=[ Predefined value ]=]
+-- Minus One
+values.negative_one = createbits();
+values.negative_one.sign = false;
+values.negative_one = rawnew(values.negative_one);
+
+-- Zero
+values.zero = createbits();
+values.zero.sign = true;
+values.zero = rawnew(values.zero);
+
+-- One
+values.one = createbits():rawset(0, 1);
+values.one.sign = true;
+values.one = rawnew(values.one);
+
+--[==[ Constructor ]==]--
+function constructor(...)
+	if select('#', ...) == 0 then
+		error("missing argument #1", 2);
+	elseif proxy.bi[(...)] then
+		return (...);
+	end;
+	local value, base = ...;
+	if base ~= nil and not tonumber(base) then
+		error("invalid argument #2 (number expected, got " .. typeof(base) .. ')', 2);
+	elseif base ~= nil and (base < 2 or base > 36 or (base % 1) ~= 0) then
+		error("invalid argument #2 (base out of range)", 2);
+	end;
+	base = base or 10;
+	local bits, sign;
+	if type(value) == "number" then
+		sign, value = value >= 0, math.abs(value);
+		if value < (2 ^ 53) then
+			bits = createbits():rawset(0, -(value + (sign and 1 or 0)));
+			bits.sign = sign;
+		else
+			return constructor(math_type(value) == "float" and ('%.0f'):format(value) or tostring(value));
+		end;
+	else
+		if type(value) ~= "string" then
+			value = tostring(value);
+		end;
+		value = value:gsub('[.,]%d+$', ''):upper();
+		
+		sign, value = value:match('^([%+%-]?)(.*)$');
+		if sign == '+' then
+			sign = '';
+		end;
+		
+		local int, frac, exp = value:match('(%d*)[.,]?(%d*)E([+]?%d+)');
+		if int and base == 10 then
+			exp = tonumber(exp);
+			if not exp then
+				return nil;
+			end;
+			if int == '' and frac == '' then
+				return nil;
+			end;
+			if exp < -1 then
+				return values.zero;
+			end;
+			frac = frac:gsub('0+$', '');
+			value = int .. frac .. ('0'):rep(exp - #frac);
+		end;
+		
+		if not (value and (value:match("^[^  _].*[^  _]$") or value:match('^[^  _]$'))) then
+			return nil;
+		end;
+		sign, value = sign == '', value:gsub('[  _]', ''):gsub('^0+', '');
+		
+		if value == '' then
+			return values.zero;
+		end;
+		
+		local base_ret = { };
+		for i = #value, 1, -1 do
+			local v = base_char:find(value:sub(i, i));
+			if not v then
+				return nil;
+			end;
+			table.insert(base_ret, v - 1);
+		end;
+		bits = to_bits(base_ret, base, sign);
+	end;
+	
+	return rawnew(bits);
+end;
+
+local function isbigint(...)
+	if select('#', ...) == 0 then
+		error("missing argument #1", 2);
+	end;
+	return not not proxy.bi[(...)];
+end;
 
 return setmetatable(
-	bi,
+	{ },
 	{
-		__newindex = function()
-			error("Attempt to modify a readonly table");
-		end;
-		__metatable = "The metatable is locked";
+		__index = function(_, ind)
+			if ind == "new" then 
+				return constructor;
+			elseif ind == "isbigint" then 
+				return isbigint; 
+			elseif not ind:match("to.*locale.*string") then
+				return bi[ind]; end;
+			return nil;
+		end, 
+		__newindex = function() error("Attempt to modify a readonly table", 2); end,
+		__metatable = "The metatable is locked",
 	}
 );
