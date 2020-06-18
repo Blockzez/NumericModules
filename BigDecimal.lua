@@ -1,5 +1,5 @@
 --[=[
-	Version 1.0.0a
+	Version 1.0.0a2
 	This is intended for Roblox ModuleScripts
 	BSD 2-Clause Licence
 	Copyright ©, 2020 - Blockzez (devforum.roblox.com/u/Blockzez and github.com/Blockzez)
@@ -29,7 +29,7 @@
 -- The BigInt module is required
 local bigint = require(script.Parent:WaitForChild("BigInteger"));
 -- International (not International Core) Module Support, just place the path of the module here (don't run require).
-local intl --= script.Parent:WaitForChild("International");
+local intl;
 --
 
 -- Lua 5.3
@@ -225,8 +225,7 @@ local function mul(self, other)
 		end;
 		return constructor((self:Sign() == sign) and 'Infinity' or '-Infinity');
 	end;
-	local r0, r1, s, delta = get_value_scale(self, other);
-	return constructor(r0 * r1, s + delta);
+	return constructor(proxy[self].value * proxy[other].value, proxy[self].scale * proxy[other].scale);
 end;
 local function divrem(self, other)
 	local r0, r1, s = get_value_scale(self, other);
@@ -275,11 +274,11 @@ local function div(self, other, context)
 	elseif s1 > precision then
 		v1 = v1 / (ten_bigint ^ ((s1 - (precision + 1)) + ((precision + 1) - s0)));
 	end;
-	return constructor(v0 / v1, precision + 1):quantize(precision);
+	return constructor(v0 / v1, precision + 1):Quantize(precision);
 end;
 local function compare(self, other)
 	if self:IsNaN() or other:IsNaN() then
-		-- C# Double.Compare and Java's Compre consider NaN bigger than all values (including Positive Infinity)
+		-- C# Double.Compare and Java's Compare consider NaN bigger than all values (including Positive Infinity)
 		return 1;
 	end;
 	if self:IsPositiveInfinity() then
@@ -460,6 +459,12 @@ end;
 --[=[ Metamethods ]=]--
 local bigdecimal_mt = { __metatable = "The metatable is locked" };
 bigdecimal_mt.__index = bd;
+function bigdecimal_mt.__newindex(self, index, value)
+	if type(index) ~= "string" and type(index) ~= "number" then
+		error("invalid argument #2 (string expected, got " .. typeof(index) .. ')', 2);
+	end;
+	error(index .. " cannot be assigned to", 2);
+end;
 bigdecimal_mt.__tostring = tostr;
 function bigdecimal_mt.__concat(left, right)
 	return tostring(left) .. tostring(right);
