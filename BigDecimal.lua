@@ -1,5 +1,5 @@
 --[=[
-	Version 1.0.0a2
+	Version 1.0.0a3
 	This is intended for Roblox ModuleScripts
 	BSD 2-Clause Licence
 	Copyright ©, 2020 - Blockzez (devforum.roblox.com/u/Blockzez and github.com/Blockzez)
@@ -28,9 +28,6 @@
 ]=]--
 -- The BigInt module is required
 local bigint = require(script.Parent:WaitForChild("BigInteger"));
--- International (not International Core) Module Support, just place the path of the module here (don't run require).
-local intl;
---
 
 -- Lua 5.3
 local function math_type(x)
@@ -49,7 +46,7 @@ local function scale_val(val, exp)
 end;
 
 local function exp(val)
-	local negt, intg, frac = val:gsub('^0+', ''):match('(-?)([%d%a()]*)[.]?(%d*)');
+	local negt, intg, frac = val:gsub('^0+', ''):match('^(-?)([%d%a()]*)[.]?(%d*)$');
 	if intg:match('%D') then
 		return val;
 	end;
@@ -60,7 +57,7 @@ local function exp(val)
 	return negt .. (intg:sub(1, 1) == '' and '0' or intg:sub(1, 1)) .. ('.' .. intg:sub(2) .. frac):gsub('[.]0*$', '') .. 'E' .. (#intg - 1);
 end;
 
-local proxy = { };
+local proxy = setmetatable({ }, { __mode = "k" });
 local bd = { };
 local current_context =
 {
@@ -225,7 +222,7 @@ local function mul(self, other)
 		end;
 		return constructor((self:Sign() == sign) and 'Infinity' or '-Infinity');
 	end;
-	return constructor(proxy[self].value * proxy[other].value, proxy[self].scale * proxy[other].scale);
+	return constructor(proxy[self].value * proxy[other].value, proxy[self].scale + proxy[other].scale);
 end;
 local function divrem(self, other)
 	local r0, r1, s = get_value_scale(self, other);
@@ -375,28 +372,6 @@ setmetatable(bd, {
 	end;
 });
 
--- Can only be accessed by International module
-if intl then
-	intl = require(intl);
-	bd.ToLocaleString = intl.ToLocaleString;
-	if intl.RuleBasedNumberFormat then
-		function bd.ToRuleBasedLocaleString(self, locale, options)
-			return intl.RuleBasedNumberFormat.new(locale, options):Format(self);
-		end;
-	else
-		function bd.ToRuleBasedLocaleString()
-			error("ToRuleBasedLocaleString required the intl (NOT intlcore) module that supports rule based number formatting", 2);
-		end;
-	end;
-else
-	function bd.ToLocaleString()
-		error("ToLocaleString requires the intl (NOT intlcore) module", 2);
-	end;
-	function bd.ToRuleBasedLocaleString()
-		error("ToRuleBasedLocaleString required the intl (NOT intlcore) module that supports rule based number formatting", 2);
-	end;
-end;
-
 function bd.IsNaN(self)
 	return proxy[self].scale == 'NaN';
 end;
@@ -495,18 +470,6 @@ end, 2, "attempt to compare {0}");
 -- 5.3
 bigdecimal_mt.__idiv = check_bigdecimal(idiv, 2, "attempt to perform arithmetic (idiv) on {0}");
 
--- mt2
-bigdecimal_mt.__divmod = check_bigdecimal(divrem, 2, "attempt to perform arithmetic (divrem) on {0}");
-bigdecimal_mt.__round = quantize;
-bigdecimal_mt.__typename = "BigDecimal";
-bigdecimal_mt.__tolocalestring = bd.ToLocaleString;
-bigdecimal_mt.__tonumber = todouble;
-bigdecimal_mt.__compare = compare;
-bigdecimal_mt.__abs = bd.abs;
-function bigdecimal_mt.__repr(self)
-	return "BigDecimal.new('" .. tostring(self) .. "')";
-end;
-
 --[=[ Constructor ]=]--
 function constructor(...)
 	local value, scale = ...;
@@ -595,7 +558,7 @@ return setmetatable(
 			if ind == "new" then 
 				return constructor; 
 			elseif ind == "NaN" then 
-				-- If rawequal(value0, value1) is true, the __eq metamethod will not run (at least on Lua 5.1, don't know about 5.3/5.4)
+				-- If rawequal(value0, value1) is true, the __eq metamethod will not run (applies to all Lua 5.1, 5.3 and 5.4)
 				-- Don't know if I can bypass this
 				return constructor('NaN');
 			elseif ind == "PositiveInfinity" then
