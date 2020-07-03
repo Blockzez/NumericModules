@@ -1,5 +1,5 @@
 --[[
-	Version 2.0.0a
+	Version 2.0.0a2
 	This is intended for Roblox ModuleScripts.
 	It works on vanilla Lua, but there are far superior implementations you should use instead.
 	BSD 2-Clause Licence
@@ -27,12 +27,13 @@
 	OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 	OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ]]--
--- International (not International Core) Module Support, just place the path of the module here (don't run require).
-local intl;
---
+local weakkey = { __mode = 'k' };
+local proxy = { bi = setmetatable({ }, weakkey), byte = setmetatable({ }, weakkey) };
 
-local proxy = { bi = { }, byte = { } };
-local hashes = { [false] = { }, [true] = { } };
+-- Hash
+local weakval = { __mode = 'v', };
+local hashes = { [false] = setmetatable({ }, weakval), [true] = setmetatable({ }, weakval) };
+local strong_ref = { };
 
 local bigint_mt = { __metatable = "The metatable is locked"; };
 
@@ -58,6 +59,7 @@ local function intband(left, right)
 end;
 
 -- Lua 5.3
+local typeof = typeof or type;
 local function math_type(x)
 	if math.type then
 		return math.type(x);
@@ -66,7 +68,7 @@ local function math_type(x)
 end;
 
 -- For Lua 5.3 users
-local is51 = (_VERSION == "Lua 5.1");
+local is51 = ('%15d'):format(9007199254740992 + 1) == "9007199254740992";
 local function newproxy_or_setmetatable(mt)
 	-- It doesn't really matter which one
 	-- If you prefer metatables you can replace it with "if mt ~= bigint_mt then" instead (if false doesn't work).
@@ -87,7 +89,8 @@ local function gethash(bytes, sign)
 	local p0 = hashes[sign];
 	for _, v in ipairs(bytes) do
 		if not p0[v] then
-			p0[v] = { };
+			p0[v] = setmetatable({ }, weakval);
+			strong_ref[p0[v]] = true;
 		end;
 		p0 = p0[v];
 	end;
@@ -335,7 +338,7 @@ end;
 
 local function to_bits(v0, base, sign)
 	if base == 2 then
-		return v0;
+		return generatebits(v0, sign):readonly();
 	end;
 	local ret = { };
 	local v1 = pseudo_bigint({ 1 }, base);
@@ -775,28 +778,6 @@ local bi = setmetatable({ }, {
 		rawset(self, ind, check_bigint(func, 1));
 	end;
 });
--- Can only be accessed by International module
-if intl then
-	intl = require(intl);
-	bi.tolocalestring = intl.ToLocaleString;
-	if intl.RuleBasedNumberFormat then
-		function bi.torulebasedlocalestring(self, locale, options)
-			return intl.RuleBasedNumberFormat.new(locale, options):Format(self);
-		end;
-	else
-		function bi.torulebasedlocalestring()
-			error("torulebasedlocalestring required the intl (NOT intlcore) module that supports rule based number formatting", 2);
-		end;
-	end;
-else
-	function bi.tolocalestring()
-		error("tolocalestring requires the intl (NOT intlcore) module", 2);
-	end;
-	function bi.torulebasedlocalestring()
-		error("torulebasedlocalestring required the intl (NOT intlcore) module that supports rule based number formatting", 2);
-	end;
-end;
-rawset(bi, 'values', values)
 
 -- For scientific notation, currencies and compact numbers tolocalestring is more than enough
 local base_char = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -848,37 +829,10 @@ function bi.tostring(self, options)
 	return (proxy.bi[self].bits.sign and '' or '-') .. ret;
 end;
 function bi.bin(self)
-	return (('0b' .. concat_base(proxy.bi[self].bits)):gsub('^0b$', '0b0'));
+	return (('0b' .. concat_base(proxy.bi[self].bits, 2)):gsub('^0b$', '0b0'));
 end;
 function bi.hex(self)
-	return (('0x' .. concat_base(proxy.bi[self].bits)):gsub('^0x$', '0x0'));
-end;
-
--- Shortener, similar to Berezaa's MoneyLib shorten's function but uses strings, and improvent on large abbreviation
--- If you want more options, use tolocalestring, but it's limited to trillion (long scale: billion) :(
-local suffixes = {"k","M","B","T","qd","Qn","sx","Sp","O","N","de","Ud","DD","tdD","qdD","QnD","sxD","SpD","OcD","NvD","Vgn","UVg","DVg","TVg","qtV","QnV","SeV","SPG","OVG","NVG","TGN","UTG","DTG","tsTG","qtTG","QnTG","ssTG","SpTG","OcTG","NoTG","QdDR","uQDR","dQDR","tQDR","qdQDR","QnQDR","sxQDR","SpQDR","OQDDr","NQDDr","qQGNT","uQGNT","dQGNT","tQGNT","qdQGNT","QnQGNT","sxQGNT","SpQGNT", "OQQGNT","NQQGNT","SXGNTL"};
-function bi.shorten(self)
-	local sign, value = tostring(self):match("(-?)(%d*)");
-	
-	local len = #value;
-	local size;
-	local suffix = suffixes[math.floor((len - 4) / 3)];
-	if suffix then
-		size = ((len - 1) % 3) + 1;
-	elseif len < 4 then
-		return sign .. value;
-	else
-		size = len - (3 * #suffixes);
-	end;
-	
-	local int = value:sub(1, size);
-	-- minimumGroupingDigits for compact numbers is recommended to be 2. #int > 4 is normal, changing it to 3 is not recommended
-	if #int > 4 then
-		int = int:reverse():gsub("(%d%d%d)", "%1,"):gsub(',$', ''):reverse();
-	end;
-	value = int .. (size > 2 and '' or ('.' .. value:sub(size + 1, size + (4 - size)))) .. suffix;
-	
-	return sign .. value;
+	return (('0x' .. concat_base(proxy.bi[self].bits, 16)):gsub('^0x$', '0x0'));
 end;
 
 function bi.mod(self, other)
@@ -1012,9 +966,6 @@ function bigint_mt.__tostring(self, options)
 	return self:tostring(options);
 end;
 bigint_mt.__concat = concat;
--- Metatable2
-bigint_mt.__tonumber = bi.todouble;
-bigint_mt.__tolocalestring = bi.tolocalestring;
 
 bigint_mt.__abs = bi.abs;
 bigint_mt.__log = bi.log;
@@ -1041,8 +992,6 @@ end;
 bigint_mt.__pow = pow;
 -- Lua 5.3
 bigint_mt.__idiv = bigint_mt.__div;
--- Metatable2
-bigint_mt.__divmod = divrem;
 
 -- Just in case for Lua 5.3 users
 getmetatable(bigint_mt).__newindex = function(self, index, func) rawset(self, index, check_bigint(func, 2, " attempt to compare {0}")) end;
@@ -1055,9 +1004,6 @@ end;
 function bigint_mt.__eq(self, other)
 	return compare(self, other) == 0;
 end;
-
--- Metatable2
-bigint_mt.__compare = compare;
 
 getmetatable(bigint_mt).__newindex = function(self, index, func) rawset(self, index, check_bigint(func, 2, " attempt to perform bitwise operation (" .. index:sub(3) .. ") on {0}")); end;
 bigint_mt.__band = band;
@@ -1081,7 +1027,7 @@ values.zero.sign = true;
 values.zero = rawnew(values.zero);
 
 -- One
-values.one = createbits():rawset(0, 1);
+values.one = createbits():rawset(0, -2);
 values.one.sign = true;
 values.one = rawnew(values.one);
 
@@ -1100,7 +1046,11 @@ function constructor(...)
 	end;
 	base = base or 10;
 	local bits, sign;
-	if type(value) == "number" then
+	if value == true then
+		return values.one;
+	elseif value == false then
+		return values.zero;
+	elseif type(value) == "number" then
 		sign, value = value >= 0, math.abs(value);
 		if value < (2 ^ 53) then
 			bits = createbits():rawset(0, -(value + (sign and 1 or 0)));
@@ -1173,11 +1123,12 @@ return setmetatable(
 				return constructor;
 			elseif ind == "isbigint" then 
 				return isbigint; 
-			elseif not ind:match("to.*locale.*string") then
-				return bi[ind]; end;
-			return nil;
-		end, 
-		__newindex = function() error("Attempt to modify a readonly table", 2); end,
+			end;
+			return bi[ind];
+		end,
 		__metatable = "The metatable is locked",
+		__newindex = function()
+			error("Attempt to modify a readonly table", 2);
+		end;
 	}
 );
